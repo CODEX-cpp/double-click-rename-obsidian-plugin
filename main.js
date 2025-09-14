@@ -1,0 +1,188 @@
+const { Plugin, Notice } = require("obsidian");
+
+module.exports = class DoubleClickRename extends Plugin {
+  onload() {
+    ////console.log("[double-click-rename] plugin loaded");
+    this._currentInput = null;
+
+    this._dblHandler = (evt) => {
+      try {
+        const target = evt.target.closest(".nav-file-title, .nav-folder-title");
+        if (!target) return;
+        evt.preventDefault();
+        evt.stopPropagation();
+
+        const dataPath =
+          target.getAttribute("data-path") || target.dataset.path;
+        if (!dataPath) return;
+
+        const file = this.app.vault.getAbstractFileByPath(dataPath);
+        if (!file) return;
+
+        this.startInlineRename(target, file, dataPath);
+      } catch (e) {
+        //console.log("[double-click-rename] dblHandler error", e);
+      }
+    };
+
+    this.registerDomEvent(document, "dblclick", this._dblHandler);
+  }
+
+  onunload() {
+    //console.log("[double-click-rename] plugin unloaded");
+    if (this._currentInput && this._currentInput.parentElement) {
+      this._currentInput.remove();
+    }
+  }
+
+  startInlineRename(target, file, path) {
+    //console.log("[double-click-rename] startInlineRename for", path);
+
+    if (this._currentInput) {
+      this._currentInput.remove();
+      this._currentInput = null;
+    }
+
+    const titleContent =
+      target.querySelector(
+        ".nav-file-title-content, .nav-folder-title-content"
+      ) || target;
+
+    // Improved path parsing
+    const lastSlash = path.lastIndexOf("/");
+    const parentPath = lastSlash === -1 ? "" : path.slice(0, lastSlash);
+    const fullName = path.slice(lastSlash + 1);
+
+    // Handle files vs folders differently
+    let displayName, extension;
+
+    if (file.children !== undefined) {
+      // It's a folder
+      displayName = fullName;
+      extension = "";
+    } else {
+      // It's a file
+      const lastDot = fullName.lastIndexOf(".");
+      if (lastDot > 0 && lastDot < fullName.length - 1) {
+        // File has an extension
+        displayName = fullName.slice(0, lastDot);
+        extension = fullName.slice(lastDot);
+      } else {
+        // File has no extension or extension is at the beginning (hidden file)
+        displayName = fullName;
+        extension = "";
+      }
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = displayName;
+    input.className = "double-click-rename-input";
+
+    // UI styling
+    input.style.all = "unset";
+    input.style.padding = "0";
+    input.style.margin = "0";
+    input.style.fontSize = "var(--font-small)";
+    input.style.lineHeight = "var(--line-height)";
+    input.style.width = "100%";
+    input.style.boxSizing = "border-box";
+    input.style.borderRadius = "var(--radius-small)";
+    input.style.background = "var(--background-modifier-card)";
+    input.style.color = "var(--text-normal)";
+    input.style.border = "1px solid var(--background-modifier-border)";
+    input.style.outline = "none";
+
+    titleContent.style.visibility = "hidden";
+    titleContent.parentElement.appendChild(input);
+    this._currentInput = input;
+    input.focus();
+    input.select();
+
+    let isCleanedUp = false;
+
+    const cleanup = () => {
+      if (isCleanedUp) return;
+      isCleanedUp = true;
+
+      //console.log("[double-click-rename] cleanup input");
+      if (input && input.parentElement) {
+        input.parentElement.removeChild(input);
+      }
+      titleContent.style.visibility = "";
+      this._currentInput = null;
+    };
+
+    const doRename = async (trigger) => {
+      const newDisplayName = input.value.trim();
+      if (!newDisplayName) {
+        //console.log("[double-click-rename] empty name, cancel");
+        cleanup();
+        return;
+      }
+      if (newDisplayName === displayName) {
+        //console.log("[double-click-rename] name unchanged");
+        cleanup();
+        return;
+      }
+
+      try {
+        // Build the new full name with extension if applicable
+        const newFullName = newDisplayName + extension;
+        const newPath = parentPath
+          ? `${parentPath}/${newFullName}`
+          : newFullName;
+
+        //console.log(`[double-click-rename] doRename called by: ${trigger}`);
+        //console.log("[double-click-rename] renaming from:", path);
+        //console.log("[double-click-rename] renaming to:", newPath);
+
+        // Remove blur event listener before rename to prevent cleanup conflicts
+        input.removeEventListener("blur", blurHandler);
+
+        // Check if target path already exists
+        const existingFile = this.app.vault.getAbstractFileByPath(newPath);
+        if (existingFile && existingFile !== file) {
+          throw new Error(
+            `A ${
+              file.children !== undefined ? "folder" : "file"
+            } with that name already exists`
+          );
+        }
+
+        await this.app.fileManager.renameFile(file, newPath);
+        //console.log("[double-click-rename] rename successful");
+
+        // Wait a bit for Obsidian to update the DOM, then force cleanup
+        setTimeout(() => {
+          cleanup(true);
+        }, 100);
+      } catch (error) {
+        //console.log("[double-click-rename] rename failed:", error);
+        new Notice(`Rename failed: ${error.message}`);
+        // Re-add blur listener if rename failed
+        input.addEventListener("blur", blurHandler);
+        input.focus();
+        input.select();
+      }
+    };
+
+    // Event listeners
+    const blurHandler = () => {
+      //console.log("[double-click-rename] blur event");
+      doRename("blur");
+    };
+    input.addEventListener("blur", blurHandler);
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        //console.log("[double-click-rename] Enter keydown event");
+        e.preventDefault();
+        doRename("enter");
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cleanup();
+      }
+    });
+  }
+};
