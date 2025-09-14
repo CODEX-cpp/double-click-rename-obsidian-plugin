@@ -2,13 +2,16 @@ const { Plugin, Notice } = require("obsidian");
 
 module.exports = class DoubleClickRename extends Plugin {
   onload() {
-    ////console.log("[double-click-rename] plugin loaded");
-    this._currentInput = null;
-
+    // Handler per doppio click
     this._dblHandler = (evt) => {
       try {
+        // Escludi doppio click su freccetta
+        if (evt.target.closest(".collapse-icon, .tree-item-icon.collapse-icon"))
+          return;
+
         const target = evt.target.closest(".nav-file-title, .nav-folder-title");
         if (!target) return;
+
         evt.preventDefault();
         evt.stopPropagation();
 
@@ -21,7 +24,7 @@ module.exports = class DoubleClickRename extends Plugin {
 
         this.startInlineRename(target, file, dataPath);
       } catch (e) {
-        //console.log("[double-click-rename] dblHandler error", e);
+        console.error("[double-click-rename] dblHandler error", e);
       }
     };
 
@@ -29,75 +32,107 @@ module.exports = class DoubleClickRename extends Plugin {
   }
 
   onunload() {
-    //console.log("[double-click-rename] plugin unloaded");
     if (this._currentInput && this._currentInput.parentElement) {
       this._currentInput.remove();
     }
   }
 
   startInlineRename(target, file, path) {
-    //console.log("[double-click-rename] startInlineRename for", path);
-
     if (this._currentInput) {
       this._currentInput.remove();
       this._currentInput = null;
     }
 
+    // Trova il contenitore del titolo (singola dichiarazione)
     const titleContent =
       target.querySelector(
         ".nav-file-title-content, .nav-folder-title-content"
       ) || target;
 
-    // Improved path parsing
+    // Analizza path
     const lastSlash = path.lastIndexOf("/");
     const parentPath = lastSlash === -1 ? "" : path.slice(0, lastSlash);
     const fullName = path.slice(lastSlash + 1);
 
-    // Handle files vs folders differently
     let displayName, extension;
 
     if (file.children !== undefined) {
-      // It's a folder
+      // cartella
       displayName = fullName;
       extension = "";
     } else {
-      // It's a file
+      // file
       const lastDot = fullName.lastIndexOf(".");
       if (lastDot > 0 && lastDot < fullName.length - 1) {
-        // File has an extension
         displayName = fullName.slice(0, lastDot);
         extension = fullName.slice(lastDot);
       } else {
-        // File has no extension or extension is at the beginning (hidden file)
         displayName = fullName;
         extension = "";
       }
     }
 
+    // Determina se è un file o una cartella
+    const isFolder = file.children !== undefined;
+
+    // Ottieni il contenitore e il suo stile
+    const rect = target.getBoundingClientRect();
+    const computedStyle = window.getComputedStyle(target);
+    const titleStyle = titleContent
+      ? window.getComputedStyle(titleContent)
+      : null;
+
+    // Crea e configura l'input
     const input = document.createElement("input");
     input.type = "text";
     input.value = displayName;
     input.className = "double-click-rename-input";
 
-    // UI styling
-    input.style.all = "unset";
-    input.style.padding = "0";
-    input.style.margin = "0";
-    input.style.fontSize = "var(--font-small)";
-    input.style.lineHeight = "var(--line-height)";
-    input.style.width = "100%";
+    // Stili di base comuni
+    input.style.position = "absolute";
+    input.style.left = `${rect.left}px`;
+    input.style.top = `${rect.top}px`;
+    input.style.width = `${rect.width}px`;
+    input.style.height = `${rect.height}px`;
+    input.style.fontSize = computedStyle.fontSize;
+    input.style.lineHeight = computedStyle.lineHeight;
     input.style.boxSizing = "border-box";
-    input.style.borderRadius = "var(--radius-small)";
-    input.style.background = "var(--background-modifier-card)";
+    input.style.background = "var(--background-modifier-form-field)";
     input.style.color = "var(--text-normal)";
     input.style.border = "1px solid var(--background-modifier-border)";
+    input.style.borderRadius = "var(--radius-s)";
     input.style.outline = "none";
+    input.style.margin = "0";
+    input.style.zIndex = "9999";
 
-    titleContent.style.visibility = "hidden";
-    titleContent.parentElement.appendChild(input);
+    // Gestisci diversamente padding e allineamento per file e cartelle
+    if (isFolder) {
+      input.style.paddingLeft = computedStyle.paddingLeft;
+      input.style.paddingRight = computedStyle.paddingRight;
+    } else {
+      // Per i file, allinea il testo con il contenuto originale
+      if (titleContent) {
+        const titleRect = titleContent.getBoundingClientRect();
+        const offsetLeft = titleRect.left - rect.left;
+        input.style.paddingLeft = `${offsetLeft}px`;
+        input.style.paddingRight = "8px";
+      }
+    }
+
+    // Nascondi il titolo originale
+    target.style.visibility = "hidden";
+    document.body.appendChild(input); // aggiungi direttamente al body
+
     this._currentInput = input;
     input.focus();
     input.select();
+
+    // Dopo appendChild(input)
+    const inputComputedStyle = window.getComputedStyle(input);
+    //console.log("Tutte le proprietà CSS calcolate dell'input:");
+    for (let prop of inputComputedStyle) {
+      //console.log(`${prop}: ${inputComputedStyle.getPropertyValue(prop)}`);
+    }
 
     let isCleanedUp = false;
 
@@ -105,42 +140,26 @@ module.exports = class DoubleClickRename extends Plugin {
       if (isCleanedUp) return;
       isCleanedUp = true;
 
-      //console.log("[double-click-rename] cleanup input");
-      if (input && input.parentElement) {
-        input.parentElement.removeChild(input);
-      }
-      titleContent.style.visibility = "";
+      if (input && input.parentElement) input.parentElement.removeChild(input);
+      target.style.visibility = "";
       this._currentInput = null;
     };
 
     const doRename = async (trigger) => {
       const newDisplayName = input.value.trim();
-      if (!newDisplayName) {
-        //console.log("[double-click-rename] empty name, cancel");
-        cleanup();
-        return;
-      }
-      if (newDisplayName === displayName) {
-        //console.log("[double-click-rename] name unchanged");
+      if (!newDisplayName || newDisplayName === displayName) {
         cleanup();
         return;
       }
 
       try {
-        // Build the new full name with extension if applicable
         const newFullName = newDisplayName + extension;
         const newPath = parentPath
           ? `${parentPath}/${newFullName}`
           : newFullName;
 
-        //console.log(`[double-click-rename] doRename called by: ${trigger}`);
-        //console.log("[double-click-rename] renaming from:", path);
-        //console.log("[double-click-rename] renaming to:", newPath);
-
-        // Remove blur event listener before rename to prevent cleanup conflicts
         input.removeEventListener("blur", blurHandler);
 
-        // Check if target path already exists
         const existingFile = this.app.vault.getAbstractFileByPath(newPath);
         if (existingFile && existingFile !== file) {
           throw new Error(
@@ -151,32 +170,22 @@ module.exports = class DoubleClickRename extends Plugin {
         }
 
         await this.app.fileManager.renameFile(file, newPath);
-        //console.log("[double-click-rename] rename successful");
 
-        // Wait a bit for Obsidian to update the DOM, then force cleanup
-        setTimeout(() => {
-          cleanup(true);
-        }, 100);
+        setTimeout(() => cleanup(), 100);
       } catch (error) {
-        //console.log("[double-click-rename] rename failed:", error);
         new Notice(`Rename failed: ${error.message}`);
-        // Re-add blur listener if rename failed
         input.addEventListener("blur", blurHandler);
         input.focus();
         input.select();
       }
     };
 
-    // Event listeners
-    const blurHandler = () => {
-      //console.log("[double-click-rename] blur event");
-      doRename("blur");
-    };
+    // Eventi
+    const blurHandler = () => doRename("blur");
     input.addEventListener("blur", blurHandler);
 
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
-        //console.log("[double-click-rename] Enter keydown event");
         e.preventDefault();
         doRename("enter");
       } else if (e.key === "Escape") {
@@ -184,5 +193,8 @@ module.exports = class DoubleClickRename extends Plugin {
         cleanup();
       }
     });
+
+    //console.log("Bounding rect titolo:", target.getBoundingClientRect());
+    //console.log("Bounding rect input:", input.getBoundingClientRect());
   }
 };
