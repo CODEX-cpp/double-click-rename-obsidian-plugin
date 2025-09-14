@@ -2,9 +2,9 @@
   "id": "double-click-rename",
   "name": "Double Click Rename",
   "version": "1.0.0",
-  "minAppVersion": "0.15.0",
-  "description": "Rinomina file/cartelle con doppio click nell'explorer",
-  "author": "Ivan",
-  "authorUrl": "",
-  "isDesktopOnly": true
+  "minAppVersion": "1.0.0",
+  "description": "Rename notes by double-clicking their title in the file explorer.",
+  "author": "Ivan Bandiera",
+  "authorUrl": "https://github.com/CODEX-cpp",
+  "isDesktopOnly": false
 }
